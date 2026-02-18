@@ -291,9 +291,11 @@ async function deposit() {
   }
 
   const zero = ethers.constants.AddressZero;
-  const isFirstUser = userAddress.toLowerCase() === String(firstUserAddr).toLowerCase();
+  const firstUserIsSet = String(firstUserAddr).toLowerCase() !== zero.toLowerCase();
+  const isFirstUser = firstUserIsSet && userAddress.toLowerCase() === String(firstUserAddr).toLowerCase();
   const hasReferrer = String(myReferrer).toLowerCase() !== zero.toLowerCase();
-  if (!isFirstUser && !hasReferrer) {
+  // 如果合约尚未产生全网 firstUser（firstUser=0x0），任何地址都有可能成为首位用户，不应在前端拦截。
+  if (firstUserIsSet && !isFirstUser && !hasReferrer) {
     throw new Error("你尚未绑定推荐人，请使用“带推荐人质押”完成首次绑定");
   }
 
