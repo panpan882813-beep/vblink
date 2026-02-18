@@ -30,6 +30,8 @@ let userAddress;
 let staking;
 let token;
 let tokenDecimals = 18;
+let isConnected = false;
+let listenersBound = false;
 
 const CUSTOM_ERROR_MESSAGES = {
   MinDeposit: "质押金额低于最小限制（当前最小 1 LINK）",
@@ -65,6 +67,52 @@ const CUSTOM_ERROR_SELECTORS = Object.fromEntries(
 );
 
 const $ = (id) => document.getElementById(id);
+
+function setConnectedUI(connected) {
+  isConnected = connected;
+  const btn = $("connectBtn");
+  if (btn) btn.textContent = connected ? "断开连接" : "连接钱包";
+}
+
+function resetUI() {
+  $("wallet").textContent = "未连接";
+  $("network").textContent = "未知";
+  $("linkBalance").textContent = "-";
+  $("allowance").textContent = "-";
+  $("myStakeCount").textContent = "-";
+  $("poolBalance").textContent = "-";
+
+  const detail = $("stakeDetail");
+  if (detail) detail.textContent = "-";
+
+  // preview fields
+  const pvIds = ["pvValid", "pvFee", "pvNet", "pvDuration", "pvRate", "pvInterest", "pvPayout"];
+  for (const id of pvIds) {
+    const el = $(id);
+    if (el) el.textContent = "-";
+  }
+}
+
+function disconnectWallet() {
+  provider = null;
+  signer = null;
+  userAddress = null;
+  staking = null;
+  token = null;
+  tokenDecimals = 18;
+  setConnectedUI(false);
+  resetUI();
+  log("已断开连接（前端状态已清空）");
+  toast("success", "已断开连接");
+}
+
+async function requireCorrectNetwork() {
+  if (!provider) throw new Error("请先连接钱包");
+  const net = await provider.getNetwork();
+  if (Number(net.chainId) !== BSC_TESTNET_CHAIN_ID) {
+    throw new Error("当前网络不是 BSC 测试网（chainId=97），请先切换网络");
+  }
+}
 
 function log(message) {
   const target = $("log");
@@ -168,6 +216,12 @@ async function connectWallet() {
   signer = provider.getSigner();
   userAddress = await signer.getAddress();
 
+  const stakingCode = await provider.getCode(STAKING_ADDRESS);
+  if (!stakingCode || stakingCode === "0x") {
+    log(`警告：合约地址没有代码（可能网络不对或地址错误）: ${STAKING_ADDRESS}`);
+    toast("error", "警告：合约地址没有代码，请确认网络与合约地址");
+  }
+
   staking = new ethers.Contract(STAKING_ADDRESS, STAKING_ABI, signer);
   const tokenAddr = await staking.stakeToken();
 
@@ -189,6 +243,54 @@ async function connectWallet() {
   await refreshMyData();
   log("钱包连接成功");
   log(`当前合约: ${STAKING_ADDRESS}`);
+
+  setConnectedUI(true);
+
+  if (!listenersBound) {
+    listenersBound = true;
+    try {
+      window.ethereum.on("accountsChanged", async (accounts) => {
+        if (!accounts || accounts.length === 0) {
+          disconnectWallet();
+          return;
+        }
+        // account switched
+        try {
+          signer = provider.getSigner();
+          userAddress = await signer.getAddress();
+          staking = new ethers.Contract(STAKING_ADDRESS, STAKING_ABI, signer);
+          const tokenAddr = await staking.stakeToken();
+          token = new ethers.Contract(tokenAddr, ERC20_ABI, signer);
+          $("wallet").textContent = userAddress;
+          await refreshNetwork();
+          await refreshMyData();
+          log("检测到账号切换，已刷新状态");
+        } catch (e) {
+          log(`账号切换后刷新失败: ${e?.message || e}`);
+        }
+      });
+
+      window.ethereum.on("chainChanged", async () => {
+        try {
+          await refreshNetwork();
+          if (isConnected) await refreshMyData();
+          log("检测到网络切换，已刷新状态");
+        } catch (e) {
+          log(`网络切换后刷新失败: ${e?.message || e}`);
+        }
+      });
+    } catch (e) {
+      // ignore listener errors
+    }
+  }
+}
+
+async function toggleConnect() {
+  if (isConnected) {
+    disconnectWallet();
+    return;
+  }
+  await connectWallet();
 }
 
 async function refreshNetwork() {
@@ -263,6 +365,7 @@ async function refreshMyData() {
 }
 
 async function approve() {
+  await requireCorrectNetwork();
   const amount = parseAmount($("amount").value);
   const tx = await token.approve(STAKING_ADDRESS, amount);
   log(`授权已发送: ${tx.hash}`);
@@ -273,6 +376,7 @@ async function approve() {
 }
 
 async function deposit() {
+  await requireCorrectNetwork();
   const amount = parseAmount($("amount").value);
 
   const [myReferrer, firstUserAddr, allowance, balance] = await Promise.all([
@@ -308,6 +412,7 @@ async function deposit() {
 }
 
 async function depositWithReferrer() {
+  await requireCorrectNetwork();
   const amount = parseAmount($("amount").value);
   const referrer = $("referrer").value.trim();
   if (!ethers.utils.isAddress(referrer)) throw new Error("推荐人地址无效");
@@ -351,6 +456,7 @@ async function preview() {
 }
 
 async function manualWithdraw() {
+  await requireCorrectNetwork();
   const id = Number($("withdrawStakeId").value);
   if (Number.isNaN(id) || id < 0) throw new Error("stakeId 无效");
   const tx = await staking.manualWithdrawMatured(id);
@@ -362,6 +468,7 @@ async function manualWithdraw() {
 }
 
 async function pressWithdraw() {
+  await requireCorrectNetwork();
   const oldId = Number($("pressOldId").value);
   const newAmount = parseAmount($("pressNewAmount").value);
   if (Number.isNaN(oldId) || oldId < 0) throw new Error("oldStakeId 无效");
@@ -374,6 +481,7 @@ async function pressWithdraw() {
 }
 
 async function claimAgent() {
+  await requireCorrectNetwork();
   const tx = await staking.claimAgentRewards();
   log(`领取代理奖励已发送: ${tx.hash}`);
   await tx.wait();
@@ -407,7 +515,7 @@ async function run(actionLabel, action) {
   }
 }
 
-$("connectBtn").onclick = () => run("连接钱包", connectWallet);
+$("connectBtn").onclick = () => run(isConnected ? "断开连接" : "连接钱包", toggleConnect);
 $("switchChainBtn").onclick = () => run("切换网络", switchToBscTestnet);
 $("refreshMyBtn").onclick = () => run("刷新数据", refreshMyData);
 $("approveBtn").onclick = () => run("授权", approve);
@@ -418,3 +526,7 @@ $("manualWithdrawBtn").onclick = () => run("手动提现", manualWithdraw);
 $("pressWithdrawBtn").onclick = () => run("压单提现", pressWithdraw);
 $("claimAgentBtn").onclick = () => run("领取代理奖励", claimAgent);
 $("queryStakeBtn").onclick = () => run("查询质押", queryStake);
+
+// Initialize
+setConnectedUI(false);
+resetUI();
