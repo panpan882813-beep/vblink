@@ -32,6 +32,26 @@ let token;
 let tokenDecimals = 18;
 let isConnected = false;
 let listenersBound = false;
+let injectedEthereum;
+
+function getInjectedEthereum() {
+  const eth = window.ethereum;
+  if (!eth) return null;
+
+  // Some wallets (e.g., TokenPocket/MetaMask) may expose multiple providers.
+  const providers = Array.isArray(eth.providers) ? eth.providers : null;
+  if (providers && providers.length > 0) {
+    const tokenPocket = providers.find((p) => p && p.isTokenPocket);
+    if (tokenPocket) return tokenPocket;
+
+    const metaMask = providers.find((p) => p && p.isMetaMask);
+    if (metaMask) return metaMask;
+
+    return providers[0];
+  }
+
+  return eth;
+}
 
 const CUSTOM_ERROR_MESSAGES = {
   MinDeposit: "质押金额低于最小限制（当前最小 1 LINK）",
@@ -210,8 +230,13 @@ function formatAmount(value) {
 }
 
 async function connectWallet() {
-  if (!window.ethereum) throw new Error("未检测到钱包插件");
-  provider = new ethers.providers.Web3Provider(window.ethereum);
+  injectedEthereum = getInjectedEthereum();
+  if (!injectedEthereum) {
+    throw new Error("未检测到钱包插件（可用 MetaMask / TokenPocket 内置浏览器打开）");
+  }
+
+  // Use "any" network so ethers doesn't get stuck on chain changes.
+  provider = new ethers.providers.Web3Provider(injectedEthereum, "any");
   await provider.send("eth_requestAccounts", []);
   signer = provider.getSigner();
   userAddress = await signer.getAddress();
@@ -249,7 +274,7 @@ async function connectWallet() {
   if (!listenersBound) {
     listenersBound = true;
     try {
-      window.ethereum.on("accountsChanged", async (accounts) => {
+      injectedEthereum.on("accountsChanged", async (accounts) => {
         if (!accounts || accounts.length === 0) {
           disconnectWallet();
           return;
@@ -270,7 +295,7 @@ async function connectWallet() {
         }
       });
 
-      window.ethereum.on("chainChanged", async () => {
+      injectedEthereum.on("chainChanged", async () => {
         try {
           await refreshNetwork();
           if (isConnected) await refreshMyData();
@@ -303,15 +328,16 @@ async function refreshNetwork() {
 }
 
 async function switchToBscTestnet() {
-  if (!window.ethereum) throw new Error("未检测到钱包插件");
+  const eth = injectedEthereum || getInjectedEthereum();
+  if (!eth) throw new Error("未检测到钱包插件");
   try {
-    await window.ethereum.request({
+    await eth.request({
       method: "wallet_switchEthereumChain",
       params: [{ chainId: "0x61" }]
     });
   } catch (err) {
     if (err.code === 4902) {
-      await window.ethereum.request({
+      await eth.request({
         method: "wallet_addEthereumChain",
         params: [{
           chainId: "0x61",
