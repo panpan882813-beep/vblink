@@ -149,9 +149,23 @@ async function sendTxAdaptive(sendDefault, sendWithOverrides) {
   } catch (e) {
     if (!provider || !isGasTooLowError(e)) throw e;
 
-    const gasPrice = await provider.getGasPrice();
-    log(`检测到 gas 过低，自动使用网络 gasPrice 重试：${ethers.utils.formatUnits(gasPrice, "gwei")} gwei`);
-    return await sendWithOverrides({ gasPrice });
+    const feeData = await provider.getFeeData();
+    const minTip = ethers.utils.parseUnits("1", "gwei");
+    const baseFee = feeData.lastBaseFeePerGas || feeData.gasPrice || (await provider.getGasPrice());
+    const priorityFee = feeData.maxPriorityFeePerGas && feeData.maxPriorityFeePerGas.gt(minTip)
+      ? feeData.maxPriorityFeePerGas
+      : minTip;
+    const maxFee = baseFee.mul(2).add(priorityFee);
+
+    log(
+      `检测到 gas 过低，自动重试：maxFee ${ethers.utils.formatUnits(maxFee, "gwei")} gwei, ` +
+      `priority ${ethers.utils.formatUnits(priorityFee, "gwei")} gwei`
+    );
+
+    return await sendWithOverrides({
+      maxFeePerGas: maxFee,
+      maxPriorityFeePerGas: priorityFee
+    });
   }
 }
 
