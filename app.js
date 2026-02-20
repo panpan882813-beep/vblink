@@ -1,5 +1,5 @@
 const BSC_TESTNET_CHAIN_ID = 97;
-const STAKING_ADDRESS = "0xEDBC01b07ab9bD0758c1FBAfdafdC71454C12659";
+const STAKING_ADDRESS = "0xa4f077b6dcf96602dacca53873564ce5d4365403";
 const EXPECTED_TOKEN_ADDRESS = "0xd96eaEb41474F1325eF399f6F5fc54AA71f09bac";
 
 const STAKING_ABI = [
@@ -621,3 +621,4 @@ $("queryStakeBtn").onclick = () => run("查询质押", queryStake);
 // Initialize
 setConnectedUI(false);
 resetUI();
+
